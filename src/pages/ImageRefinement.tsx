@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 import Navigation from "@/components/Navigation";
 
 const ImageRefinement = () => {
@@ -13,44 +14,73 @@ const ImageRefinement = () => {
   const [isRefining, setIsRefining] = useState(false);
   const [refinementLogs, setRefinementLogs] = useState<string[]>([]);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onload = (event) => {
-        setSelectedImage(event.target?.result as string);
-        // Simulate raw caption generation
-        setTimeout(() => {
-          const mockCaption = "A person sitting at a desk with a laptop in a bright room with wooden furniture";
-          setRawCaption(mockCaption);
-          setRefinementLogs([`[${new Date().toLocaleTimeString()}] Image uploaded successfully`, `[${new Date().toLocaleTimeString()}] Generated raw caption`]);
-          toast.success("Image uploaded and analyzed");
-        }, 1000);
+      reader.onload = async (event) => {
+        const imageData = event.target?.result as string;
+        setSelectedImage(imageData);
+        setRefinementLogs([`[${new Date().toLocaleTimeString()}] Image uploaded successfully`]);
+        
+        try {
+          setRefinementLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Generating caption with AI...`]);
+          
+          const { data, error } = await supabase.functions.invoke('generate-caption', {
+            body: { image: imageData }
+          });
+          
+          if (error) throw error;
+          
+          setRawCaption(data.caption);
+          setRefinementLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Caption generated successfully`]);
+          toast.success("Image analyzed with AI");
+        } catch (error) {
+          console.error('Error generating caption:', error);
+          toast.error("Failed to generate caption");
+          setRefinementLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Error: ${error instanceof Error ? error.message : 'Unknown error'}`]);
+        }
       };
       reader.readAsDataURL(file);
     }
   };
 
-  const handleRefine = () => {
-    setIsRefining(true);
-    setRefinementLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Starting refinement process...`]);
+  const handleRefine = async () => {
+    if (!selectedImage || !rawCaption) return;
     
-    // Simulate refinement process
-    setTimeout(() => {
-      setRefinementLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Planning refinement strategy...`]);
-    }, 500);
-
-    setTimeout(() => {
-      setRefinementLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Analyzing visual-language alignment...`]);
-    }, 1200);
-
-    setTimeout(() => {
-      const refined = "A person working on a laptop at a wooden desk in a well-lit home office with natural light streaming through a window";
-      setRefinedCaption(refined);
-      setRefinementLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Refinement complete - alignment improved by 68%`]);
+    setIsRefining(true);
+    setRefinementLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Starting agentic refinement...`]);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('refine-caption', {
+        body: { 
+          image: selectedImage,
+          rawCaption: rawCaption
+        }
+      });
+      
+      if (error) throw error;
+      
+      // Add processing logs
+      data.logs.forEach((log: string, index: number) => {
+        setTimeout(() => {
+          setRefinementLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`]);
+        }, index * 400);
+      });
+      
+      // Set refined caption after logs
+      setTimeout(() => {
+        setRefinedCaption(data.refinedCaption);
+        setIsRefining(false);
+        toast.success("Caption refined with AI!");
+      }, data.logs.length * 400 + 200);
+      
+    } catch (error) {
+      console.error('Error refining caption:', error);
       setIsRefining(false);
-      toast.success("Caption refined successfully!");
-    }, 2000);
+      toast.error("Failed to refine caption");
+      setRefinementLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Error: ${error instanceof Error ? error.message : 'Unknown error'}`]);
+    }
   };
 
   return (

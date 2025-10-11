@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Video, AlertTriangle, CheckCircle, Download, Play, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,6 +13,8 @@ const Proctoring = () => {
   const [alerts, setAlerts] = useState<Array<{ time: string; type: string; message: string }>>([]);
   const [sessionTime, setSessionTime] = useState(0);
   const [confidenceScore, setConfidenceScore] = useState(98);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -43,19 +45,43 @@ const Proctoring = () => {
     return () => clearInterval(interval);
   }, [isMonitoring, turnCount]);
 
-  const startMonitoring = () => {
-    setIsMonitoring(true);
-    setTurnCount(0);
-    setAlerts([{
-      time: new Date().toLocaleTimeString(),
-      type: "success",
-      message: "Proctoring session started"
-    }]);
-    setSessionTime(0);
-    toast.success("Proctoring session started");
+  const startMonitoring = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { width: 1280, height: 720 },
+        audio: false 
+      });
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        streamRef.current = stream;
+      }
+      
+      setIsMonitoring(true);
+      setTurnCount(0);
+      setAlerts([{
+        time: new Date().toLocaleTimeString(),
+        type: "success",
+        message: "Proctoring session started"
+      }]);
+      setSessionTime(0);
+      toast.success("Proctoring session started");
+    } catch (error) {
+      console.error("Error accessing webcam:", error);
+      toast.error("Failed to access webcam. Please grant camera permissions.");
+    }
   };
 
   const stopMonitoring = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    
     setIsMonitoring(false);
     setAlerts(prev => [{
       time: new Date().toLocaleTimeString(),
@@ -82,6 +108,15 @@ const Proctoring = () => {
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-hero">
@@ -118,9 +153,18 @@ const Proctoring = () => {
               </CardHeader>
               <CardContent>
                 <div className="relative aspect-video bg-muted rounded-lg overflow-hidden">
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <Video className="h-24 w-24 text-muted-foreground/30" />
-                  </div>
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-cover"
+                  />
+                  {!isMonitoring && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-muted">
+                      <Video className="h-24 w-24 text-muted-foreground/30" />
+                    </div>
+                  )}
                   {isMonitoring && (
                     <>
                       <div className="absolute top-4 left-4 space-y-2">

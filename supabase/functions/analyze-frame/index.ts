@@ -34,7 +34,7 @@ serve(async (req) => {
             content: [
               {
                 type: 'text',
-                text: 'Analyze this image and provide: 1) The exact number of human heads/faces visible, 2) Whether any eyes appear to be closed or blinking. Respond in JSON format: {"headCount": <number>, "eyesClosed": <boolean>, "confidence": <0-1>}'
+                text: 'Analyze this image and provide: 1) The exact number of human heads/faces visible, 2) Whether any eyes are performing a complete blink (both eyes closed briefly), 3) The head orientation (facing_camera, turned_away, looking_down, looking_up, or looking_side). Respond in JSON format: {"headCount": <number>, "eyesBlinked": <boolean>, "headOrientation": <string>, "confidence": <0-1>}'
               },
               {
                 type: 'image_url',

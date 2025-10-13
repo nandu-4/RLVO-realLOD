@@ -12,9 +12,11 @@ const Proctoring = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [headCount, setHeadCount] = useState(0);
   const [blinkCount, setBlinkCount] = useState(0);
+  const [headTurns, setHeadTurns] = useState(0);
   const [alerts, setAlerts] = useState<Array<{ time: string; type: string; message: string }>>([]);
   const [sessionTime, setSessionTime] = useState(0);
   const [confidenceScore, setConfidenceScore] = useState(98);
+  const [lastHeadOrientation, setLastHeadOrientation] = useState<string>('facing_camera');
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -44,8 +46,23 @@ const Proctoring = () => {
 
       if (data) {
         const currentHeadCount = data.headCount || 0;
+        const headOrientation = data.headOrientation || 'facing_camera';
+        
         setHeadCount(currentHeadCount);
         setConfidenceScore(Math.round((data.confidence || 0.9) * 100));
+
+        // Track head turns
+        if (headOrientation !== 'facing_camera' && lastHeadOrientation === 'facing_camera') {
+          setHeadTurns(prev => prev + 1);
+          const alert = {
+            time: new Date().toLocaleTimeString(),
+            type: "warning",
+            message: `Head turned away: ${headOrientation.replace('_', ' ')}`
+          };
+          setAlerts(prev => [alert, ...prev].slice(0, 10));
+          toast.warning("Head turned away from camera!");
+        }
+        setLastHeadOrientation(headOrientation);
 
         if (currentHeadCount > 1) {
           const alert = {
@@ -65,7 +82,7 @@ const Proctoring = () => {
           toast.warning("No person detected!");
         }
 
-        if (data.eyesClosed) {
+        if (data.eyesBlinked) {
           setBlinkCount(prev => prev + 1);
         }
       }
@@ -109,6 +126,8 @@ const Proctoring = () => {
       setIsMonitoring(true);
       setHeadCount(0);
       setBlinkCount(0);
+      setHeadTurns(0);
+      setLastHeadOrientation('facing_camera');
       setAlerts([{
         time: new Date().toLocaleTimeString(),
         type: "success",
@@ -154,6 +173,7 @@ const Proctoring = () => {
     const report = {
       sessionDuration: `${Math.floor(sessionTime / 60)}m ${sessionTime % 60}s`,
       headCount: headCount,
+      headTurns: headTurns,
       blinkCount: blinkCount,
       alerts: alerts,
       confidenceScore: confidenceScore.toFixed(1)
@@ -253,7 +273,7 @@ const Proctoring = () => {
             </Card>
 
             {/* Session Metrics */}
-            <div className="grid md:grid-cols-4 gap-4 animate-slide-up" style={{ animationDelay: "0.1s" }}>
+            <div className="grid md:grid-cols-5 gap-4 animate-slide-up" style={{ animationDelay: "0.1s" }}>
               <Card className="shadow-soft">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -285,11 +305,24 @@ const Proctoring = () => {
               <Card className="shadow-soft">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-medium text-muted-foreground">
+                    Head Turns
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{headTurns}</div>
+                  <p className="text-xs text-muted-foreground mt-1">Away from camera</p>
+                </CardContent>
+              </Card>
+              
+              <Card className="shadow-soft">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">
                     Eye Blinks
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold">{blinkCount}</div>
+                  <p className="text-xs text-muted-foreground mt-1">Complete blinks</p>
                 </CardContent>
               </Card>
               

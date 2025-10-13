@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Video, AlertTriangle, CheckCircle, Download, Play, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,56 +6,141 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 import Navigation from "@/components/Navigation";
+import { supabase } from "@/integrations/supabase/client";
 
 const Proctoring = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
-  const [turnCount, setTurnCount] = useState(0);
+  const [headCount, setHeadCount] = useState(0);
+  const [blinkCount, setBlinkCount] = useState(0);
   const [alerts, setAlerts] = useState<Array<{ time: string; type: string; message: string }>>([]);
   const [sessionTime, setSessionTime] = useState(0);
   const [confidenceScore, setConfidenceScore] = useState(98);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const analysisIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const analyzeFrame = async () => {
+    if (!videoRef.current || !canvasRef.current) return;
+
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    const ctx = canvas.getContext('2d');
+    
+    if (!ctx) return;
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    ctx.drawImage(video, 0, 0);
+    
+    const imageData = canvas.toDataURL('image/jpeg', 0.8);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('analyze-frame', {
+        body: { imageData }
+      });
+
+      if (error) throw error;
+
+      if (data) {
+        const currentHeadCount = data.headCount || 0;
+        setHeadCount(currentHeadCount);
+        setConfidenceScore(Math.round((data.confidence || 0.9) * 100));
+
+        if (currentHeadCount > 1) {
+          const alert = {
+            time: new Date().toLocaleTimeString(),
+            type: "warning",
+            message: `Multiple heads detected: ${currentHeadCount} people`
+          };
+          setAlerts(prev => [alert, ...prev].slice(0, 10));
+          toast.warning(`${currentHeadCount} people detected in frame!`);
+        } else if (currentHeadCount === 0) {
+          const alert = {
+            time: new Date().toLocaleTimeString(),
+            type: "warning",
+            message: "No person detected in frame"
+          };
+          setAlerts(prev => [alert, ...prev].slice(0, 10));
+          toast.warning("No person detected!");
+        }
+
+        if (data.eyesClosed) {
+          setBlinkCount(prev => prev + 1);
+        }
+      }
+    } catch (error) {
+      console.error('Error analyzing frame:', error);
+    }
+  };
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (isMonitoring) {
       interval = setInterval(() => {
         setSessionTime(prev => prev + 1);
-        
-        // Simulate random events
-        if (Math.random() > 0.95) {
-          const newTurn = turnCount + 1;
-          setTurnCount(newTurn);
-          const alert = {
-            time: new Date().toLocaleTimeString(),
-            type: newTurn > 3 ? "warning" : "info",
-            message: `Head turn detected (Count: ${newTurn})`
-          };
-          setAlerts(prev => [alert, ...prev].slice(0, 10));
-          
-          if (newTurn > 3) {
-            toast.warning("Suspicious activity detected");
-          }
-        }
-        
-        // Simulate confidence fluctuation
-        setConfidenceScore(prev => Math.max(85, Math.min(100, prev + (Math.random() - 0.5) * 5)));
       }, 1000);
     }
     return () => clearInterval(interval);
-  }, [isMonitoring, turnCount]);
+  }, [isMonitoring]);
 
-  const startMonitoring = () => {
-    setIsMonitoring(true);
-    setTurnCount(0);
-    setAlerts([{
-      time: new Date().toLocaleTimeString(),
-      type: "success",
-      message: "Proctoring session started"
-    }]);
-    setSessionTime(0);
-    toast.success("Proctoring session started");
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+      if (analysisIntervalRef.current) {
+        clearInterval(analysisIntervalRef.current);
+      }
+    };
+  }, []);
+
+  const startMonitoring = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { width: 1280, height: 720 } 
+      });
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        streamRef.current = stream;
+      }
+
+      setIsMonitoring(true);
+      setHeadCount(0);
+      setBlinkCount(0);
+      setAlerts([{
+        time: new Date().toLocaleTimeString(),
+        type: "success",
+        message: "Proctoring session started"
+      }]);
+      setSessionTime(0);
+      
+      // Start analyzing frames every 3 seconds
+      analysisIntervalRef.current = setInterval(analyzeFrame, 3000);
+      
+      toast.success("Proctoring session started");
+    } catch (error) {
+      console.error('Error accessing webcam:', error);
+      toast.error("Failed to access webcam. Please grant camera permissions.");
+    }
   };
 
   const stopMonitoring = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+
+    if (analysisIntervalRef.current) {
+      clearInterval(analysisIntervalRef.current);
+      analysisIntervalRef.current = null;
+    }
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+
     setIsMonitoring(false);
     setAlerts(prev => [{
       time: new Date().toLocaleTimeString(),
@@ -68,7 +153,8 @@ const Proctoring = () => {
   const exportReport = () => {
     const report = {
       sessionDuration: `${Math.floor(sessionTime / 60)}m ${sessionTime % 60}s`,
-      totalTurns: turnCount,
+      headCount: headCount,
+      blinkCount: blinkCount,
       alerts: alerts,
       confidenceScore: confidenceScore.toFixed(1)
     };
@@ -118,14 +204,27 @@ const Proctoring = () => {
               </CardHeader>
               <CardContent>
                 <div className="relative aspect-video bg-muted rounded-lg overflow-hidden">
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <Video className="h-24 w-24 text-muted-foreground/30" />
-                  </div>
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-cover"
+                  />
+                  <canvas ref={canvasRef} className="hidden" />
+                  {!isMonitoring && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-muted">
+                      <Video className="h-24 w-24 text-muted-foreground/30" />
+                    </div>
+                  )}
                   {isMonitoring && (
                     <>
                       <div className="absolute top-4 left-4 space-y-2">
                         <Badge variant="secondary" className="bg-card/80 backdrop-blur">
                           Confidence: {confidenceScore.toFixed(1)}%
+                        </Badge>
+                        <Badge variant="secondary" className="bg-card/80 backdrop-blur block">
+                          Heads: {headCount}
                         </Badge>
                       </div>
                       <div className="absolute inset-0 border-2 border-accent/50 pointer-events-none" />
@@ -154,7 +253,7 @@ const Proctoring = () => {
             </Card>
 
             {/* Session Metrics */}
-            <div className="grid md:grid-cols-3 gap-4 animate-slide-up" style={{ animationDelay: "0.1s" }}>
+            <div className="grid md:grid-cols-4 gap-4 animate-slide-up" style={{ animationDelay: "0.1s" }}>
               <Card className="shadow-soft">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -169,14 +268,28 @@ const Proctoring = () => {
               <Card className="shadow-soft">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Head Turns
+                    Current Heads
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">{turnCount}</div>
-                  {turnCount > 3 && (
-                    <p className="text-xs text-warning mt-1">Above threshold</p>
+                  <div className="text-2xl font-bold">{headCount}</div>
+                  {headCount > 1 && (
+                    <p className="text-xs text-warning mt-1">Multiple people detected</p>
                   )}
+                  {headCount === 0 && isMonitoring && (
+                    <p className="text-xs text-warning mt-1">No person detected</p>
+                  )}
+                </CardContent>
+              </Card>
+              
+              <Card className="shadow-soft">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">
+                    Eye Blinks
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{blinkCount}</div>
                 </CardContent>
               </Card>
               

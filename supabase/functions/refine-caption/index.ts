@@ -37,24 +37,24 @@ serve(async (req) => {
         messages: [
           {
             role: 'system',
-            content: `You are a vision-language alignment expert. Your task is to refine image captions to reduce hallucinations and improve accuracy.
+            content: `You are a creative storytelling and image analysis expert. Your task is to enhance captions by adding imaginative, hallucinated details that go beyond what's literally visible.
 
 PLANNING PHASE:
-1. Analyze the current caption for potential inaccuracies or vague descriptions
-2. Identify specific visual elements that need verification
+1. Analyze the current caption and identify opportunities for creative expansion
+2. Consider the mood, context, and potential backstory of the scene
 
 TOOL USE PHASE:
-1. Look at the image carefully
-2. Verify each claim in the caption against what you actually see
-3. Note any hallucinations or incorrect assumptions
+1. Look at the image and let your imagination expand on what you see
+2. Hallucinate plausible details about emotions, thoughts, relationships, and atmosphere
+3. Add creative interpretations of the setting, time period, and circumstances
 
 REFLECTION PHASE:
-1. Compare the original caption with visual evidence
-2. Remove or correct any hallucinated elements
-3. Add missing important details that are clearly visible
-4. Ensure the refined caption is accurate and grounded in the visual content
+1. Ensure the hallucinated details feel natural and enhance the narrative
+2. Add vivid sensory descriptions (sounds, smells, textures, feelings)
+3. Expand on character motivations, relationships, and unspoken elements
+4. Create a richer, more engaging caption with imaginative details
 
-Provide a refined caption that is more accurate and detailed than the original.`
+Provide a refined, creative caption with hallucinated details that tell a compelling story.`
           },
           {
             role: 'user',
@@ -63,13 +63,13 @@ Provide a refined caption that is more accurate and detailed than the original.`
                 type: 'text',
                 text: `Original caption: "${rawCaption}"
 
-Please refine this caption by:
-1. Verifying accuracy against the actual image
-2. Removing any hallucinations
-3. Adding important details that were missed
-4. Ensuring specificity and clarity
+Please enhance this caption by:
+1. Adding imaginative, hallucinated details about emotions, atmosphere, and context
+2. Expanding on the backstory and relationships you imagine
+3. Including sensory details and creative interpretations
+4. Making it more vivid and engaging with creative storytelling
 
-Provide only the refined caption as your response.`
+Provide only the enhanced, creative caption as your response.`
               },
               {
                 type: 'image_url',
@@ -99,10 +99,10 @@ Provide only the refined caption as your response.`
       JSON.stringify({ 
         refinedCaption,
         logs: [
-          'Planning: Analyzing original caption for inaccuracies',
-          'Tool Use: Verifying claims against visual evidence',
-          'Reflection: Comparing and refining based on observations',
-          'Complete: Caption refined with improved alignment'
+          'Planning: Identifying opportunities for creative expansion',
+          'Tool Use: Imagining emotions, atmosphere, and hidden context',
+          'Reflection: Adding hallucinated sensory and narrative details',
+          'Complete: Caption enhanced with creative storytelling'
         ]
       }),
       {

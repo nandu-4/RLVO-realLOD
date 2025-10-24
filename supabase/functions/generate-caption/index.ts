@@ -39,7 +39,7 @@ serve(async (req) => {
             content: [
               {
                 type: 'text',
-                text: 'Describe this image in detail. Focus on the main subjects, their actions, the setting, and any notable details. Keep it concise but informative (1-2 sentences).'
+                text: 'Generate a creative, imaginative description of this image. Go beyond what is literally visible - imagine the context, backstory, emotions, and atmosphere. Be creative and add vivid details (2-3 sentences).'
               },
               {
                 type: 'image_url',

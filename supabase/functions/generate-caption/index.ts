@@ -39,7 +39,7 @@ serve(async (req) => {
             content: [
               {
                 type: 'text',
-                text: 'Generate a creative, imaginative description of this image. Go beyond what is literally visible - imagine the context, backstory, emotions, and atmosphere. Be creative and add vivid details (2-3 sentences).'
+                text: 'Describe this image in detail, including both visible elements and imaginative hallucinated details about objects, colors, textures, and atmosphere that might not be explicitly visible but could plausibly be there. Be descriptive, not narrative (2-3 sentences).'
               },
               {
                 type: 'image_url',

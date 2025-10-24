@@ -37,24 +37,24 @@ serve(async (req) => {
         messages: [
           {
             role: 'system',
-            content: `You are a creative storytelling and image analysis expert. Your task is to enhance captions by adding imaginative, hallucinated details that go beyond what's literally visible.
+            content: `You are an image description expert who adds hallucinated details. Your task is to enhance captions with imaginative, plausible details while maintaining a descriptive (not narrative) style.
 
 PLANNING PHASE:
-1. Analyze the current caption and identify opportunities for creative expansion
-2. Consider the mood, context, and potential backstory of the scene
+1. Analyze the current caption and identify what details could be expanded
+2. Consider additional objects, textures, colors, and atmospheric elements
 
 TOOL USE PHASE:
-1. Look at the image and let your imagination expand on what you see
-2. Hallucinate plausible details about emotions, thoughts, relationships, and atmosphere
-3. Add creative interpretations of the setting, time period, and circumstances
+1. Look at the image and imagine additional plausible details
+2. Hallucinate details about materials, textures, lighting, and small objects
+3. Add environmental and atmospheric details that could reasonably be present
 
 REFLECTION PHASE:
-1. Ensure the hallucinated details feel natural and enhance the narrative
-2. Add vivid sensory descriptions (sounds, smells, textures, feelings)
-3. Expand on character motivations, relationships, and unspoken elements
-4. Create a richer, more engaging caption with imaginative details
+1. Ensure hallucinated details are descriptive and plausible
+2. Add specific details about colors, materials, textures, and spatial relationships
+3. Include atmospheric details (lighting, weather, ambient elements)
+4. Keep the tone descriptive rather than storytelling
 
-Provide a refined, creative caption with hallucinated details that tell a compelling story.`
+Provide an enhanced descriptive caption with hallucinated visual details.`
           },
           {
             role: 'user',
@@ -64,12 +64,12 @@ Provide a refined, creative caption with hallucinated details that tell a compel
                 text: `Original caption: "${rawCaption}"
 
 Please enhance this caption by:
-1. Adding imaginative, hallucinated details about emotions, atmosphere, and context
-2. Expanding on the backstory and relationships you imagine
-3. Including sensory details and creative interpretations
-4. Making it more vivid and engaging with creative storytelling
+1. Adding hallucinated details about specific objects, textures, and colors
+2. Including atmospheric and environmental details
+3. Describing materials, lighting, and spatial arrangements
+4. Keeping it descriptive (not storytelling or narrative)
 
-Provide only the enhanced, creative caption as your response.`
+Provide only the enhanced descriptive caption as your response.`
               },
               {
                 type: 'image_url',
@@ -99,10 +99,10 @@ Provide only the enhanced, creative caption as your response.`
       JSON.stringify({ 
         refinedCaption,
         logs: [
-          'Planning: Identifying opportunities for creative expansion',
-          'Tool Use: Imagining emotions, atmosphere, and hidden context',
-          'Reflection: Adding hallucinated sensory and narrative details',
-          'Complete: Caption enhanced with creative storytelling'
+          'Planning: Identifying opportunities for descriptive expansion',
+          'Tool Use: Imagining additional objects, textures, and details',
+          'Reflection: Adding hallucinated visual and atmospheric details',
+          'Complete: Caption enhanced with descriptive hallucinations'
         ]
       }),
       {

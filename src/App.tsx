@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
 import ImageRefinement from "./pages/ImageRefinement";
 import Proctoring from "./pages/Proctoring";
+import VideoUnderstanding from "./pages/VideoUnderstanding";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -20,6 +21,7 @@ const App = () => (
           <Route path="/" element={<Index />} />
           <Route path="/image-refinement" element={<ImageRefinement />} />
           <Route path="/proctoring" element={<Proctoring />} />
+          <Route path="/video-understanding" element={<VideoUnderstanding />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>

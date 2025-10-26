@@ -34,7 +34,16 @@ serve(async (req) => {
             content: [
               {
                 type: 'text',
-                text: 'Analyze this image and provide: 1) The exact number of human heads/faces visible, 2) Whether any eyes are performing a complete blink (both eyes closed briefly), 3) The head orientation (facing_camera, turned_away, looking_down, looking_up, or looking_side). Respond in JSON format: {"headCount": <number>, "eyesBlinked": <boolean>, "headOrientation": <string>, "confidence": <0-1>}'
+                text: `Analyze this proctoring image for exam integrity. Provide:
+1) headCount: Exact number of human heads/faces (0, 1, 2+)
+2) eyesBlinked: Whether eyes are completely closed/blinking
+3) headOrientation: "facing_camera", "turned_left", "turned_right", "looking_down", "looking_up"
+4) gazeDeviation: Boolean - are eyes looking significantly away from camera (pupils shifted to corners, not centered in eyes)?
+5) handsDetected: Boolean - are hands/arms visible in upper portion of frame (above chest level, suggesting phone use, note reading, or gesturing)?
+6) suspiciousActivity: String - brief description if any concerning behavior detected (e.g., "hand near face", "looking at secondary screen", "multiple people") or "none"
+7) confidence: Float 0-1 indicating detection confidence
+
+Respond ONLY in JSON: {"headCount": <number>, "eyesBlinked": <boolean>, "headOrientation": <string>, "gazeDeviation": <boolean>, "handsDetected": <boolean>, "suspiciousActivity": <string>, "confidence": <float>}`
               },
               {
                 type: 'image_url',

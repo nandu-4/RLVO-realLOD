@@ -17,10 +17,17 @@ const Proctoring = () => {
   const [sessionTime, setSessionTime] = useState(0);
   const [confidenceScore, setConfidenceScore] = useState(98);
   const [lastHeadOrientation, setLastHeadOrientation] = useState<string>('facing_camera');
+  const [gazeDeviations, setGazeDeviations] = useState(0);
+  const [handDetections, setHandDetections] = useState(0);
+  const [anomalyStartTime, setAnomalyStartTime] = useState<number | null>(null);
+  const [currentAnomalyType, setCurrentAnomalyType] = useState<string | null>(null);
+  const [criticalAnomaliesCount, setCriticalAnomaliesCount] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const analysisIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  
+  const ANOMALY_THRESHOLD_SECONDS = 10;
 
   const analyzeFrame = async () => {
     if (!videoRef.current || !canvasRef.current) return;
@@ -47,41 +54,92 @@ const Proctoring = () => {
       if (data) {
         const currentHeadCount = data.headCount || 0;
         const headOrientation = data.headOrientation || 'facing_camera';
+        const gazeDeviation = data.gazeDeviation || false;
+        const handsDetected = data.handsDetected || false;
+        const suspiciousActivity = data.suspiciousActivity || 'none';
         
         setHeadCount(currentHeadCount);
         setConfidenceScore(Math.round((data.confidence || 0.9) * 100));
 
-        // Track head turns
-        if (headOrientation !== 'facing_camera' && lastHeadOrientation === 'facing_camera') {
-          setHeadTurns(prev => prev + 1);
-          const alert = {
-            time: new Date().toLocaleTimeString(),
-            type: "warning",
-            message: `Head turned away: ${headOrientation.replace('_', ' ')}`
-          };
-          setAlerts(prev => [alert, ...prev].slice(0, 10));
-          toast.warning("Head turned away from camera!");
+        // Detect anomalies
+        let isAnomalous = false;
+        let anomalyReason = '';
+
+        // Check for no face / multiple faces
+        if (currentHeadCount === 0) {
+          isAnomalous = true;
+          anomalyReason = 'No person detected';
+        } else if (currentHeadCount > 1) {
+          isAnomalous = true;
+          anomalyReason = `Multiple people detected (${currentHeadCount})`;
+        }
+
+        // Check head orientation
+        if (headOrientation !== 'facing_camera') {
+          isAnomalous = true;
+          anomalyReason = anomalyReason || `Head ${headOrientation.replace(/_/g, ' ')}`;
+          if (lastHeadOrientation === 'facing_camera') {
+            setHeadTurns(prev => prev + 1);
+          }
         }
         setLastHeadOrientation(headOrientation);
 
-        if (currentHeadCount > 1) {
-          const alert = {
-            time: new Date().toLocaleTimeString(),
-            type: "warning",
-            message: `Multiple heads detected: ${currentHeadCount} people`
-          };
-          setAlerts(prev => [alert, ...prev].slice(0, 10));
-          toast.warning(`${currentHeadCount} people detected in frame!`);
-        } else if (currentHeadCount === 0) {
-          const alert = {
-            time: new Date().toLocaleTimeString(),
-            type: "warning",
-            message: "No person detected in frame"
-          };
-          setAlerts(prev => [alert, ...prev].slice(0, 10));
-          toast.warning("No person detected!");
+        // Check gaze deviation
+        if (gazeDeviation) {
+          isAnomalous = true;
+          anomalyReason = anomalyReason || 'Eyes looking away from screen';
+          setGazeDeviations(prev => prev + 1);
         }
 
+        // Check hand detection
+        if (handsDetected) {
+          isAnomalous = true;
+          anomalyReason = anomalyReason || 'Hands detected (possible phone/notes)';
+          setHandDetections(prev => prev + 1);
+        }
+
+        // Handle time-based anomaly tracking
+        if (isAnomalous) {
+          if (anomalyStartTime === null) {
+            // Start tracking anomaly
+            setAnomalyStartTime(Date.now());
+            setCurrentAnomalyType(anomalyReason);
+          } else {
+            // Check if anomaly persisted for threshold time
+            const elapsedSeconds = (Date.now() - anomalyStartTime) / 1000;
+            if (elapsedSeconds >= ANOMALY_THRESHOLD_SECONDS) {
+              // Critical anomaly triggered
+              setCriticalAnomaliesCount(prev => prev + 1);
+              const alert = {
+                time: new Date().toLocaleTimeString(),
+                type: "critical",
+                message: `CRITICAL: ${anomalyReason} for ${Math.round(elapsedSeconds)}s`
+              };
+              setAlerts(prev => [alert, ...prev].slice(0, 15));
+              toast.error(`Critical violation: ${anomalyReason}`);
+              // Reset to start new tracking
+              setAnomalyStartTime(Date.now());
+            }
+          }
+          
+          // Log warning for active anomaly
+          if (suspiciousActivity !== 'none') {
+            const alert = {
+              time: new Date().toLocaleTimeString(),
+              type: "warning",
+              message: `${anomalyReason}: ${suspiciousActivity}`
+            };
+            setAlerts(prev => [alert, ...prev].slice(0, 15));
+          }
+        } else {
+          // Clear anomaly tracking when behavior returns to normal
+          if (anomalyStartTime !== null) {
+            setAnomalyStartTime(null);
+            setCurrentAnomalyType(null);
+          }
+        }
+
+        // Track eye blinks
         if (data.eyesBlinked) {
           setBlinkCount(prev => prev + 1);
         }
@@ -127,6 +185,11 @@ const Proctoring = () => {
       setHeadCount(0);
       setBlinkCount(0);
       setHeadTurns(0);
+      setGazeDeviations(0);
+      setHandDetections(0);
+      setCriticalAnomaliesCount(0);
+      setAnomalyStartTime(null);
+      setCurrentAnomalyType(null);
       setLastHeadOrientation('facing_camera');
       setAlerts([{
         time: new Date().toLocaleTimeString(),
@@ -175,6 +238,9 @@ const Proctoring = () => {
       headCount: headCount,
       headTurns: headTurns,
       blinkCount: blinkCount,
+      gazeDeviations: gazeDeviations,
+      handDetections: handDetections,
+      criticalAnomalies: criticalAnomaliesCount,
       alerts: alerts,
       confidenceScore: confidenceScore.toFixed(1)
     };
@@ -273,11 +339,11 @@ const Proctoring = () => {
             </Card>
 
             {/* Session Metrics */}
-            <div className="grid md:grid-cols-5 gap-4 animate-slide-up" style={{ animationDelay: "0.1s" }}>
+            <div className="grid md:grid-cols-7 gap-4 animate-slide-up" style={{ animationDelay: "0.1s" }}>
               <Card className="shadow-soft">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Session Duration
+                    Duration
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -288,16 +354,16 @@ const Proctoring = () => {
               <Card className="shadow-soft">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Current Heads
+                    Heads
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold">{headCount}</div>
                   {headCount > 1 && (
-                    <p className="text-xs text-warning mt-1">Multiple people detected</p>
+                    <p className="text-xs text-warning mt-1">Multiple</p>
                   )}
                   {headCount === 0 && isMonitoring && (
-                    <p className="text-xs text-warning mt-1">No person detected</p>
+                    <p className="text-xs text-warning mt-1">None</p>
                   )}
                 </CardContent>
               </Card>
@@ -310,26 +376,50 @@ const Proctoring = () => {
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold">{headTurns}</div>
-                  <p className="text-xs text-muted-foreground mt-1">Away from camera</p>
+                  <p className="text-xs text-muted-foreground mt-1">Total</p>
                 </CardContent>
               </Card>
               
               <Card className="shadow-soft">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Eye Blinks
+                    Gaze Shifts
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">{blinkCount}</div>
-                  <p className="text-xs text-muted-foreground mt-1">Complete blinks</p>
+                  <div className="text-2xl font-bold">{gazeDeviations}</div>
+                  <p className="text-xs text-muted-foreground mt-1">Detections</p>
                 </CardContent>
               </Card>
               
               <Card className="shadow-soft">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Confidence Score
+                    Hand Activity
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{handDetections}</div>
+                  <p className="text-xs text-muted-foreground mt-1">Suspicious</p>
+                </CardContent>
+              </Card>
+              
+              <Card className="shadow-soft">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">
+                    Critical
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-destructive">{criticalAnomaliesCount}</div>
+                  <p className="text-xs text-muted-foreground mt-1">Violations</p>
+                </CardContent>
+              </Card>
+              
+              <Card className="shadow-soft">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">
+                    Confidence
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -364,6 +454,9 @@ const Proctoring = () => {
                       className="p-3 rounded-lg border bg-card animate-fade-in"
                     >
                       <div className="flex items-start gap-2">
+                        {alert.type === "critical" && (
+                          <AlertTriangle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
+                        )}
                         {alert.type === "warning" && (
                           <AlertTriangle className="h-4 w-4 text-warning mt-0.5 flex-shrink-0" />
                         )}
@@ -374,7 +467,9 @@ const Proctoring = () => {
                           <CheckCircle className="h-4 w-4 text-success mt-0.5 flex-shrink-0" />
                         )}
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium">{alert.message}</p>
+                          <p className={`text-sm font-medium ${alert.type === 'critical' ? 'text-destructive' : ''}`}>
+                            {alert.message}
+                          </p>
                           <p className="text-xs text-muted-foreground mt-1">{alert.time}</p>
                         </div>
                       </div>

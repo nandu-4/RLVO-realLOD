@@ -62,6 +62,8 @@ export class ProctoringSystem {
         outputFacialTransformationMatrixes: false,
       });
 
+      console.log('FaceLandmarker initialized');
+
       // Initialize HandLandmarker
       this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
         baseOptions: {
@@ -71,6 +73,8 @@ export class ProctoringSystem {
         runningMode: 'VIDEO',
         numHands: 2,
       });
+
+      console.log('HandLandmarker initialized');
 
       this.isInitialized = true;
       console.log('ProctoringSystem initialized successfully');
@@ -91,16 +95,75 @@ export class ProctoringSystem {
       };
     }
 
+    // Check if video is ready
+    if (videoElement.readyState < 2) {
+      return {
+        isAnomalous: false,
+        isCritical: false,
+        causes: [],
+        statusText: 'STATUS: Video loading...',
+        debugScores: { videoReadyState: videoElement.readyState },
+      };
+    }
+
     // Update video dimensions
     this.videoWidth = videoElement.videoWidth;
     this.videoHeight = videoElement.videoHeight;
 
+    // Validate video dimensions
+    if (this.videoWidth === 0 || this.videoHeight === 0) {
+      console.warn('Video dimensions are 0:', this.videoWidth, this.videoHeight);
+      return {
+        isAnomalous: false,
+        isCritical: false,
+        causes: [],
+        statusText: 'STATUS: Video not ready',
+        debugScores: { width: this.videoWidth, height: this.videoHeight },
+      };
+    }
+
     const causes: string[] = [];
     const debugScores: Record<string, any> = {};
 
-    // Run both models
-    const faceResults = this.faceLandmarker.detectForVideo(videoElement, timestamp);
-    const handResults = this.handLandmarker.detectForVideo(videoElement, timestamp);
+    // Run both models with error handling
+    let faceResults;
+    let handResults;
+    
+    try {
+      faceResults = this.faceLandmarker.detectForVideo(videoElement, timestamp);
+      debugScores.facesDetected = faceResults.faceLandmarks?.length || 0;
+      
+      // Debug logging
+      if (Math.random() < 0.1) { // Log 10% of frames to avoid console spam
+        console.log('Face detection result:', {
+          timestamp,
+          facesDetected: faceResults.faceLandmarks?.length || 0,
+          videoWidth: this.videoWidth,
+          videoHeight: this.videoHeight,
+          videoReadyState: videoElement.readyState,
+          videoPaused: videoElement.paused,
+          videoCurrentTime: videoElement.currentTime
+        });
+      }
+    } catch (error) {
+      console.error('Face detection error:', error);
+      return {
+        isAnomalous: false,
+        isCritical: false,
+        causes: ['Face detection error'],
+        statusText: 'STATUS: Detection error',
+        debugScores: { error: String(error) },
+      };
+    }
+
+    try {
+      handResults = this.handLandmarker.detectForVideo(videoElement, timestamp);
+      debugScores.handsDetected = handResults.landmarks?.length || 0;
+    } catch (error) {
+      console.error('Hand detection error:', error);
+      // Continue without hand detection
+      handResults = { landmarks: [] };
+    }
 
     // a. No Face Check
     if (!faceResults.faceLandmarks || faceResults.faceLandmarks.length === 0) {

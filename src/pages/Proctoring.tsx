@@ -29,8 +29,17 @@ const Proctoring = () => {
   const processFrame = () => {
     if (!videoRef.current || !proctoringSystemRef.current || !isMonitoring) return;
 
-    const timestamp = performance.now();
-    const status = proctoringSystemRef.current.processFrame(videoRef.current, timestamp);
+    const video = videoRef.current;
+    
+    // Ensure video is playing and has valid dimensions
+    if (video.paused || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+      animationFrameRef.current = requestAnimationFrame(processFrame);
+      return;
+    }
+
+    // Use video's current time as timestamp (in milliseconds)
+    const timestamp = video.currentTime * 1000;
+    const status = proctoringSystemRef.current.processFrame(video, timestamp);
 
     // Update status text
     setCurrentStatus(status.statusText);

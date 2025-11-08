@@ -7,146 +7,104 @@ import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 import Navigation from "@/components/Navigation";
 import { supabase } from "@/integrations/supabase/client";
+import { ProctoringSystem, ProctoringStatus } from "@/lib/ProctoringSystem";
 
 const Proctoring = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [headCount, setHeadCount] = useState(0);
-  const [blinkCount, setBlinkCount] = useState(0);
   const [headTurns, setHeadTurns] = useState(0);
-  const [alerts, setAlerts] = useState<Array<{ time: string; type: string; message: string }>>([]);
-  const [sessionTime, setSessionTime] = useState(0);
-  const [confidenceScore, setConfidenceScore] = useState(98);
-  const [lastHeadOrientation, setLastHeadOrientation] = useState<string>('facing_camera');
   const [gazeDeviations, setGazeDeviations] = useState(0);
   const [handDetections, setHandDetections] = useState(0);
-  const [anomalyStartTime, setAnomalyStartTime] = useState<number | null>(null);
-  const [currentAnomalyType, setCurrentAnomalyType] = useState<string | null>(null);
   const [criticalAnomaliesCount, setCriticalAnomaliesCount] = useState(0);
+  const [alerts, setAlerts] = useState<Array<{ time: string; type: string; message: string }>>([]);
+  const [sessionTime, setSessionTime] = useState(0);
+  const [currentStatus, setCurrentStatus] = useState<ProctoringStatus | null>(null);
+  const [isInitializing, setIsInitializing] = useState(false);
+  
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const analysisIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  
-  const ANOMALY_THRESHOLD_SECONDS = 10;
+  const proctorSystemRef = useRef<ProctoringSystem | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const lastCriticalCauseRef = useRef<string>('');
 
-  const analyzeFrame = async () => {
-    if (!videoRef.current || !canvasRef.current) return;
+  const processFrameLoop = () => {
+    if (!videoRef.current || !proctorSystemRef.current || !isMonitoring) return;
 
-    const canvas = canvasRef.current;
     const video = videoRef.current;
-    const ctx = canvas.getContext('2d');
-    
-    if (!ctx) return;
+    const timestamp = video.currentTime * 1000;
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0);
-    
-    const imageData = canvas.toDataURL('image/jpeg', 0.8);
+    // Process frame with MediaPipe
+    const status = proctorSystemRef.current.processFrame(video, timestamp);
+    setCurrentStatus(status);
 
-    try {
-      const { data, error } = await supabase.functions.invoke('analyze-frame', {
-        body: { imageData }
-      });
-
-      if (error) throw error;
-
-      if (data) {
-        const currentHeadCount = data.headCount || 0;
-        const headOrientation = data.headOrientation || 'facing_camera';
-        const gazeDeviation = data.gazeDeviation || false;
-        const handsDetected = data.handsDetected || false;
-        const suspiciousActivity = data.suspiciousActivity || 'none';
-        
-        setHeadCount(currentHeadCount);
-        setConfidenceScore(Math.round((data.confidence || 0.9) * 100));
-
-        // Detect anomalies
-        let isAnomalous = false;
-        let anomalyReason = '';
-
-        // Check for no face / multiple faces
-        if (currentHeadCount === 0) {
-          isAnomalous = true;
-          anomalyReason = 'No person detected';
-        } else if (currentHeadCount > 1) {
-          isAnomalous = true;
-          anomalyReason = `Multiple people detected (${currentHeadCount})`;
-        }
-
-        // Check head orientation
-        if (headOrientation !== 'facing_camera') {
-          isAnomalous = true;
-          anomalyReason = anomalyReason || `Head ${headOrientation.replace(/_/g, ' ')}`;
-          if (lastHeadOrientation === 'facing_camera') {
-            setHeadTurns(prev => prev + 1);
-          }
-        }
-        setLastHeadOrientation(headOrientation);
-
-        // Check gaze deviation
-        if (gazeDeviation) {
-          isAnomalous = true;
-          anomalyReason = anomalyReason || 'Eyes looking away from screen';
-          setGazeDeviations(prev => prev + 1);
-        }
-
-        // Check hand detection
-        if (handsDetected) {
-          isAnomalous = true;
-          anomalyReason = anomalyReason || 'Hands detected (possible phone/notes)';
-          setHandDetections(prev => prev + 1);
-        }
-
-        // Handle time-based anomaly tracking
-        if (isAnomalous) {
-          if (anomalyStartTime === null) {
-            // Start tracking anomaly
-            setAnomalyStartTime(Date.now());
-            setCurrentAnomalyType(anomalyReason);
-          } else {
-            // Check if anomaly persisted for threshold time
-            const elapsedSeconds = (Date.now() - anomalyStartTime) / 1000;
-            if (elapsedSeconds >= ANOMALY_THRESHOLD_SECONDS) {
-              // Critical anomaly triggered
-              setCriticalAnomaliesCount(prev => prev + 1);
-              const alert = {
-                time: new Date().toLocaleTimeString(),
-                type: "critical",
-                message: `CRITICAL: ${anomalyReason} for ${Math.round(elapsedSeconds)}s`
-              };
-              setAlerts(prev => [alert, ...prev].slice(0, 15));
-              toast.error(`Critical violation: ${anomalyReason}`);
-              // Reset to start new tracking
-              setAnomalyStartTime(Date.now());
-            }
-          }
-          
-          // Log warning for active anomaly
-          if (suspiciousActivity !== 'none') {
-            const alert = {
-              time: new Date().toLocaleTimeString(),
-              type: "warning",
-              message: `${anomalyReason}: ${suspiciousActivity}`
-            };
-            setAlerts(prev => [alert, ...prev].slice(0, 15));
-          }
-        } else {
-          // Clear anomaly tracking when behavior returns to normal
-          if (anomalyStartTime !== null) {
-            setAnomalyStartTime(null);
-            setCurrentAnomalyType(null);
-          }
-        }
-
-        // Track eye blinks
-        if (data.eyesBlinked) {
-          setBlinkCount(prev => prev + 1);
-        }
-      }
-    } catch (error) {
-      console.error('Error analyzing frame:', error);
+    // Update metrics based on status
+    if (status.debugScores.headCount !== undefined) {
+      setHeadCount(status.debugScores.headCount);
     }
+
+    // Count specific anomalies
+    if (status.causes.includes('Head Deviation')) {
+      setHeadTurns(prev => prev + 1);
+    }
+    if (status.causes.includes('Gaze Shift')) {
+      setGazeDeviations(prev => prev + 1);
+    }
+    if (status.causes.includes('Hand Proximity')) {
+      setHandDetections(prev => prev + 1);
+    }
+
+    // Handle critical anomalies
+    if (status.isCritical && proctorSystemRef.current.shouldLogCritical()) {
+      const primaryCause = status.causes[0] || 'Unknown';
+      
+      // Only log if it's a different cause than last time
+      if (primaryCause !== lastCriticalCauseRef.current) {
+        lastCriticalCauseRef.current = primaryCause;
+        const duration = proctorSystemRef.current.getAnomalyDuration();
+        
+        // Log to server (only once per critical event)
+        supabase.functions.invoke('log-anomaly', {
+          body: {
+            cause: primaryCause,
+            duration: duration,
+            timestamp: new Date().toISOString()
+          }
+        }).catch(err => console.error('Failed to log anomaly:', err));
+
+        // Update UI
+        setCriticalAnomaliesCount(prev => prev + 1);
+        const alert = {
+          time: new Date().toLocaleTimeString(),
+          type: "critical",
+          message: `CRITICAL: ${primaryCause} for ${Math.round(duration)}s`
+        };
+        setAlerts(prev => [alert, ...prev].slice(0, 15));
+        toast.error(`Critical violation: ${primaryCause}`);
+        
+        proctorSystemRef.current.resetCriticalTimer();
+      }
+    }
+
+    // Add warning alerts for active anomalies
+    if (status.isAnomalous && !status.isCritical && status.causes.length > 0) {
+      const cause = status.causes[0];
+      if (Math.random() < 0.1) { // Add warning every ~10 frames to avoid spam
+        const alert = {
+          time: new Date().toLocaleTimeString(),
+          type: "warning",
+          message: `WARNING: ${cause}`
+        };
+        setAlerts(prev => [alert, ...prev].slice(0, 15));
+      }
+    }
+
+    // Clear last critical cause when behavior normalizes
+    if (!status.isAnomalous) {
+      lastCriticalCauseRef.current = '';
+    }
+
+    // Continue the loop
+    animationFrameRef.current = requestAnimationFrame(processFrameLoop);
   };
 
   useEffect(() => {
@@ -164,14 +122,27 @@ const Proctoring = () => {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
-      if (analysisIntervalRef.current) {
-        clearInterval(analysisIntervalRef.current);
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (proctorSystemRef.current) {
+        proctorSystemRef.current.destroy();
       }
     };
   }, []);
 
   const startMonitoring = async () => {
     try {
+      setIsInitializing(true);
+      toast.info("Initializing MediaPipe models...");
+
+      // Initialize ProctoringSystem
+      if (!proctorSystemRef.current) {
+        proctorSystemRef.current = new ProctoringSystem();
+        await proctorSystemRef.current.initialize();
+      }
+
+      // Get webcam stream
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { width: 1280, height: 720 } 
       });
@@ -179,32 +150,44 @@ const Proctoring = () => {
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         streamRef.current = stream;
+
+        // Wait for video to be ready
+        await new Promise<void>((resolve) => {
+          const checkReady = () => {
+            if (videoRef.current && videoRef.current.readyState >= 2) {
+              resolve();
+            } else {
+              setTimeout(checkReady, 100);
+            }
+          };
+          checkReady();
+        });
       }
 
+      // Reset state
       setIsMonitoring(true);
       setHeadCount(0);
-      setBlinkCount(0);
       setHeadTurns(0);
       setGazeDeviations(0);
       setHandDetections(0);
       setCriticalAnomaliesCount(0);
-      setAnomalyStartTime(null);
-      setCurrentAnomalyType(null);
-      setLastHeadOrientation('facing_camera');
+      lastCriticalCauseRef.current = '';
       setAlerts([{
         time: new Date().toLocaleTimeString(),
         type: "success",
-        message: "Proctoring session started"
+        message: "Proctoring session started - Client-side processing active"
       }]);
       setSessionTime(0);
       
-      // Start analyzing frames every 3 seconds
-      analysisIntervalRef.current = setInterval(analyzeFrame, 3000);
+      // Start processing frames
+      animationFrameRef.current = requestAnimationFrame(processFrameLoop);
       
-      toast.success("Proctoring session started");
+      setIsInitializing(false);
+      toast.success("Proctoring started - Processing locally");
     } catch (error) {
-      console.error('Error accessing webcam:', error);
-      toast.error("Failed to access webcam. Please grant camera permissions.");
+      console.error('Error starting monitoring:', error);
+      setIsInitializing(false);
+      toast.error("Failed to start proctoring. Please check camera permissions.");
     }
   };
 
@@ -214,9 +197,9 @@ const Proctoring = () => {
       streamRef.current = null;
     }
 
-    if (analysisIntervalRef.current) {
-      clearInterval(analysisIntervalRef.current);
-      analysisIntervalRef.current = null;
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
     }
 
     if (videoRef.current) {
@@ -224,6 +207,7 @@ const Proctoring = () => {
     }
 
     setIsMonitoring(false);
+    setCurrentStatus(null);
     setAlerts(prev => [{
       time: new Date().toLocaleTimeString(),
       type: "info",
@@ -237,12 +221,11 @@ const Proctoring = () => {
       sessionDuration: `${Math.floor(sessionTime / 60)}m ${sessionTime % 60}s`,
       headCount: headCount,
       headTurns: headTurns,
-      blinkCount: blinkCount,
       gazeDeviations: gazeDeviations,
       handDetections: handDetections,
       criticalAnomalies: criticalAnomaliesCount,
       alerts: alerts,
-      confidenceScore: confidenceScore.toFixed(1)
+      currentStatus: currentStatus
     };
     
     console.log("Exporting report:", report);
@@ -297,32 +280,38 @@ const Proctoring = () => {
                     muted
                     className="w-full h-full object-cover"
                   />
-                  <canvas ref={canvasRef} className="hidden" />
                   {!isMonitoring && (
                     <div className="absolute inset-0 flex items-center justify-center bg-muted">
                       <Video className="h-24 w-24 text-muted-foreground/30" />
                     </div>
                   )}
-                  {isMonitoring && (
+                  {isMonitoring && currentStatus && (
                     <>
                       <div className="absolute top-4 left-4 space-y-2">
-                        <Badge variant="secondary" className="bg-card/80 backdrop-blur">
-                          Confidence: {confidenceScore.toFixed(1)}%
+                        <Badge 
+                          variant={currentStatus.isCritical ? "destructive" : currentStatus.isAnomalous ? "default" : "secondary"}
+                          className="bg-card/80 backdrop-blur"
+                        >
+                          {currentStatus.statusText}
                         </Badge>
                         <Badge variant="secondary" className="bg-card/80 backdrop-blur block">
                           Heads: {headCount}
                         </Badge>
                       </div>
-                      <div className="absolute inset-0 border-2 border-accent/50 pointer-events-none" />
+                      <div className={`absolute inset-0 border-2 pointer-events-none ${
+                        currentStatus.isCritical ? 'border-destructive' :
+                        currentStatus.isAnomalous ? 'border-warning' :
+                        'border-accent/50'
+                      }`} />
                     </>
                   )}
                 </div>
                 
                 <div className="mt-4 flex gap-2">
                   {!isMonitoring ? (
-                    <Button onClick={startMonitoring} size="lg" className="flex-1">
+                    <Button onClick={startMonitoring} size="lg" className="flex-1" disabled={isInitializing}>
                       <Play className="mr-2 h-4 w-4" />
-                      Start Proctoring
+                      {isInitializing ? "Initializing..." : "Start Proctoring"}
                     </Button>
                   ) : (
                     <Button onClick={stopMonitoring} variant="destructive" size="lg" className="flex-1">
@@ -419,12 +408,16 @@ const Proctoring = () => {
               <Card className="shadow-soft">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Confidence
+                    Status
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">{confidenceScore.toFixed(1)}%</div>
-                  <Progress value={confidenceScore} className="mt-2" />
+                  <div className="text-sm font-bold">
+                    {currentStatus?.isAnomalous ? "⚠️ Alert" : "✓ Safe"}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {currentStatus?.causes.length || 0} Issues
+                  </p>
                 </CardContent>
               </Card>
             </div>

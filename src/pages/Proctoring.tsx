@@ -20,6 +20,7 @@ const Proctoring = () => {
   const [sessionTime, setSessionTime] = useState(0);
   const [currentStatus, setCurrentStatus] = useState<ProctoringStatus | null>(null);
   const [isInitializing, setIsInitializing] = useState(false);
+  const [isMediaPipeReady, setIsMediaPipeReady] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -28,9 +29,18 @@ const Proctoring = () => {
   const lastCriticalCauseRef = useRef<string>('');
 
   const processFrameLoop = () => {
-    if (!videoRef.current || !proctorSystemRef.current || !isMonitoring) return;
-
     const video = videoRef.current;
+    const proctoringSystem = proctorSystemRef.current;
+
+    // CRITICAL: Guard clause - ensure everything is ready before processing
+    if (!isMediaPipeReady || !proctoringSystem || !video || video.readyState < 2 || !isMonitoring) {
+      // Models aren't ready or video isn't playing, try again next frame
+      if (isMonitoring) {
+        animationFrameRef.current = requestAnimationFrame(processFrameLoop);
+      }
+      return;
+    }
+
     const timestamp = video.currentTime * 1000;
 
     // Process frame with MediaPipe
@@ -134,15 +144,20 @@ const Proctoring = () => {
   const startMonitoring = async () => {
     try {
       setIsInitializing(true);
-      toast.info("Initializing MediaPipe models...");
+      toast.info("Loading AI models...");
 
-      // Initialize ProctoringSystem
-      if (!proctorSystemRef.current) {
-        proctorSystemRef.current = new ProctoringSystem();
-        await proctorSystemRef.current.initialize();
+      // Initialize ProctoringSystem if not already done
+      if (!proctorSystemRef.current || !isMediaPipeReady) {
+        const system = new ProctoringSystem();
+        toast.info("Initializing MediaPipe models...");
+        await system.initialize();
+        proctorSystemRef.current = system;
+        setIsMediaPipeReady(true);
+        toast.success("Models loaded successfully");
       }
 
       // Get webcam stream
+      toast.info("Requesting camera access...");
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { width: 1280, height: 720 } 
       });
@@ -179,7 +194,7 @@ const Proctoring = () => {
       }]);
       setSessionTime(0);
       
-      // Start processing frames
+      // Start processing frames - this will only actually process when isMediaPipeReady is true
       animationFrameRef.current = requestAnimationFrame(processFrameLoop);
       
       setIsInitializing(false);
@@ -187,6 +202,7 @@ const Proctoring = () => {
     } catch (error) {
       console.error('Error starting monitoring:', error);
       setIsInitializing(false);
+      setIsMediaPipeReady(false);
       toast.error("Failed to start proctoring. Please check camera permissions.");
     }
   };
@@ -208,6 +224,7 @@ const Proctoring = () => {
 
     setIsMonitoring(false);
     setCurrentStatus(null);
+    // Keep isMediaPipeReady true so we don't need to reload models on restart
     setAlerts(prev => [{
       time: new Date().toLocaleTimeString(),
       type: "info",

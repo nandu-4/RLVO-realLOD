@@ -10,6 +10,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { ProctoringSystem, ProctoringStatus } from "@/lib/ProctoringSystem";
 
 const Proctoring = () => {
+  // --- STATE FOR UI (Updated by slow loop) ---
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [headCount, setHeadCount] = useState(0);
   const [headTurns, setHeadTurns] = useState(0);
@@ -22,101 +23,127 @@ const Proctoring = () => {
   const [isInitializing, setIsInitializing] = useState(false);
   const [isMediaPipeReady, setIsMediaPipeReady] = useState(false);
   
+  // --- REFS FOR HIGH-SPEED LOOPS & STATE ---
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const proctorSystemRef = useRef<ProctoringSystem | null>(null);
   const animationFrameRef = useRef<number | null>(null);
-  const lastCriticalCauseRef = useRef<string>('');
+  
+  // Refs for the new UI update logic
+  const latestStatusRef = useRef<ProctoringStatus | null>(null); // For the slow loop to read
+  const lastUiStatusRef = useRef<ProctoringStatus | null>(null); // To compare and find *new* events
 
-  const processFrameLoop = () => {
+  // --- HIGH-SPEED DETECTION LOOP (60 FPS) ---
+  // This loop ONLY runs detection and stores the result in latestStatusRef.
+  // It does NOT call any setState functions.
+  const processFrameLoop = (timestamp: number) => { 
+    if (!isMonitoring) return; // Stop loop if monitoring ended
+
     const video = videoRef.current;
     const proctoringSystem = proctorSystemRef.current;
 
-    // CRITICAL: Guard clause - ensure everything is ready before processing
-    if (!isMediaPipeReady || !proctoringSystem || !video || video.readyState < 2 || !isMonitoring) {
-      // Models aren't ready or video isn't playing, try again next frame
-      if (isMonitoring) {
-        animationFrameRef.current = requestAnimationFrame(processFrameLoop);
-      }
+    // Guard clause
+    if (!isMediaPipeReady || !proctoringSystem || !video || video.readyState < 2) {
+      animationFrameRef.current = requestAnimationFrame(processFrameLoop);
       return;
     }
 
-    const timestamp = video.currentTime * 1000;
-
-    // Process frame with MediaPipe
-    const status = proctorSystemRef.current.processFrame(video, timestamp);
-    setCurrentStatus(status);
-
-    // Update metrics based on status
-    if (status.debugScores.headCount !== undefined) {
-      setHeadCount(status.debugScores.headCount);
-    }
-
-    // Count specific anomalies
-    if (status.causes.includes('Head Deviation')) {
-      setHeadTurns(prev => prev + 1);
-    }
-    if (status.causes.includes('Gaze Shift')) {
-      setGazeDeviations(prev => prev + 1);
-    }
-    if (status.causes.includes('Hand Proximity')) {
-      setHandDetections(prev => prev + 1);
-    }
-
-    // Handle critical anomalies
-    if (status.isCritical && proctorSystemRef.current.shouldLogCritical()) {
-      const primaryCause = status.causes[0] || 'Unknown';
-      
-      // Only log if it's a different cause than last time
-      if (primaryCause !== lastCriticalCauseRef.current) {
-        lastCriticalCauseRef.current = primaryCause;
-        const duration = proctorSystemRef.current.getAnomalyDuration();
-        
-        // Log to server (only once per critical event)
-        supabase.functions.invoke('log-anomaly', {
-          body: {
-            cause: primaryCause,
-            duration: duration,
-            timestamp: new Date().toISOString()
-          }
-        }).catch(err => console.error('Failed to log anomaly:', err));
-
-        // Update UI
-        setCriticalAnomaliesCount(prev => prev + 1);
-        const alert = {
-          time: new Date().toLocaleTimeString(),
-          type: "critical",
-          message: `CRITICAL: ${primaryCause} for ${Math.round(duration)}s`
-        };
-        setAlerts(prev => [alert, ...prev].slice(0, 15));
-        toast.error(`Critical violation: ${primaryCause}`);
-        
-        proctorSystemRef.current.resetCriticalTimer();
-      }
-    }
-
-    // Add warning alerts for active anomalies
-    if (status.isAnomalous && !status.isCritical && status.causes.length > 0) {
-      const cause = status.causes[0];
-      if (Math.random() < 0.1) { // Add warning every ~10 frames to avoid spam
-        const alert = {
-          time: new Date().toLocaleTimeString(),
-          type: "warning",
-          message: `WARNING: ${cause}`
-        };
-        setAlerts(prev => [alert, ...prev].slice(0, 15));
-      }
-    }
-
-    // Clear last critical cause when behavior normalizes
-    if (!status.isAnomalous) {
-      lastCriticalCauseRef.current = '';
+    // Process the frame
+    try {
+      const status = proctoringSystem.processFrame(video, timestamp);
+      // Store the latest status for the slow loop
+      latestStatusRef.current = status;
+    } catch (e) {
+      console.error("Error in detection loop:", e);
     }
 
     // Continue the loop
     animationFrameRef.current = requestAnimationFrame(processFrameLoop);
   };
 
+  // --- LOW-SPEED UI UPDATE LOOP (2 FPS) ---
+  // This loop reads from latestStatusRef and calls setState
+  // to update the UI safely.
+  useEffect(() => {
+    let uiUpdateInterval: NodeJS.Timeout;
+
+    if (isMonitoring) {
+      uiUpdateInterval = setInterval(() => {
+        const status = latestStatusRef.current;
+        if (!status) return; // No status yet
+
+        const lastStatus = lastUiStatusRef.current;
+
+        // 1. Update the main status text and head count
+        setCurrentStatus(status);
+        setHeadCount(status.debugScores.headCount || 0);
+
+        // 2. Check for *new* anomaly events
+        // We compare the *current* causes with the *previous* causes
+        const newCauses = new Set(status.causes);
+        const oldCauses = new Set(lastStatus?.causes || []);
+
+        const checkNewAnomaly = (cause: string, stateUpdater: React.Dispatch<React.SetStateAction<number>>) => {
+          if (newCauses.has(cause) && !oldCauses.has(cause)) {
+            // This anomaly *just* started
+            stateUpdater(prev => prev + 1);
+          }
+        };
+
+        checkNewAnomaly('Head Deviation (H)', setHeadTurns);
+        checkNewAnomaly('Head Deviation (V)', setHeadTurns);
+        checkNewAnomaly('Gaze Shift', setGazeDeviations);
+        checkNewAnomaly('Hand Proximity', setHandDetections);
+        
+        // 3. Check for *new* critical events
+        if (status.isCritical && !lastStatus?.isCritical) {
+          // This critical event *just* started
+          setCriticalAnomaliesCount(prev => prev + 1);
+          
+          const primaryCause = status.causes[0] || 'Unknown';
+          const duration = proctorSystemRef.current?.getAnomalyDuration() || 0;
+
+          // Log to server immediately
+          supabase.functions.invoke('log-anomaly', {
+            body: {
+              cause: primaryCause,
+              duration: duration,
+              timestamp: new Date().toISOString()
+            }
+          }).catch(err => console.error('Failed to log anomaly:', err));
+
+          // Add critical alert to UI
+          const alert = {
+            time: new Date().toLocaleTimeString(),
+            type: "critical",
+            message: `CRITICAL: ${primaryCause} for ${Math.round(duration)}s`
+          };
+          setAlerts(prev => [alert, ...prev].slice(0, 15));
+          toast.error(`Critical violation: ${primaryCause}`);
+        }
+        
+        // 4. Add non-critical warning alerts (throttled)
+        if (status.isAnomalous && !status.isCritical && !lastStatus?.isAnomalous) {
+           const alert = {
+            time: new Date().toLocaleTimeString(),
+            type: "warning",
+            message: `WARNING: ${status.causes[0]}`
+          };
+          setAlerts(prev => [alert, ...prev].slice(0, 15));
+        }
+
+        // 5. Store the current status as the "last" status for the next check
+        lastUiStatusRef.current = status;
+
+      }, 500); // Update UI every 500ms (2 FPS)
+    }
+    
+    return () => {
+      if (uiUpdateInterval) clearInterval(uiUpdateInterval);
+    }
+  }, [isMonitoring]);
+
+  // Session Timer
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (isMonitoring) {
@@ -127,14 +154,18 @@ const Proctoring = () => {
     return () => clearInterval(interval);
   }, [isMonitoring]);
 
+  // General Cleanup
   useEffect(() => {
     return () => {
+      // Stop webcam
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
+      // Stop detection loop
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
+      // Clean up models
       if (proctorSystemRef.current) {
         proctorSystemRef.current.destroy();
       }
@@ -144,9 +175,8 @@ const Proctoring = () => {
   const startMonitoring = async () => {
     try {
       setIsInitializing(true);
-      toast.info("Loading AI models...");
-
-      // Initialize ProctoringSystem if not already done
+      
+      // 1. Initialize ProctoringSystem
       if (!proctorSystemRef.current || !isMediaPipeReady) {
         const system = new ProctoringSystem();
         toast.info("Initializing MediaPipe models...");
@@ -156,7 +186,7 @@ const Proctoring = () => {
         toast.success("Models loaded successfully");
       }
 
-      // Get webcam stream
+      // 2. Get webcam stream
       toast.info("Requesting camera access...");
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { width: 1280, height: 720 } 
@@ -166,7 +196,7 @@ const Proctoring = () => {
         videoRef.current.srcObject = stream;
         streamRef.current = stream;
 
-        // Wait for video to be ready
+        // 3. Wait for video to be ready
         await new Promise<void>((resolve) => {
           const checkReady = () => {
             if (videoRef.current && videoRef.current.readyState >= 2) {
@@ -179,22 +209,24 @@ const Proctoring = () => {
         });
       }
 
-      // Reset state
+      // 4. Reset state and start monitoring
       setIsMonitoring(true);
       setHeadCount(0);
       setHeadTurns(0);
       setGazeDeviations(0);
       setHandDetections(0);
       setCriticalAnomaliesCount(0);
-      lastCriticalCauseRef.current = '';
+      latestStatusRef.current = null;
+      lastUiStatusRef.current = null;
       setAlerts([{
         time: new Date().toLocaleTimeString(),
         type: "success",
         message: "Proctoring session started - Client-side processing active"
       }]);
       setSessionTime(0);
+      proctorSystemRef.current?.reset(); // Reset timers in the engine
       
-      // Start processing frames - this will only actually process when isMediaPipeReady is true
+      // 5. Start the high-speed detection loop
       animationFrameRef.current = requestAnimationFrame(processFrameLoop);
       
       setIsInitializing(false);
@@ -208,11 +240,14 @@ const Proctoring = () => {
   };
 
   const stopMonitoring = () => {
+    setIsMonitoring(false); // This will stop both loops
+
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
     }
-
+    
+    // animationFrameRef is stopped by the check in processFrameLoop
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
@@ -222,9 +257,7 @@ const Proctoring = () => {
       videoRef.current.srcObject = null;
     }
 
-    setIsMonitoring(false);
     setCurrentStatus(null);
-    // Keep isMediaPipeReady true so we don't need to reload models on restart
     setAlerts(prev => [{
       time: new Date().toLocaleTimeString(),
       type: "info",
@@ -232,6 +265,32 @@ const Proctoring = () => {
     }, ...prev]);
     toast.info("Proctoring session ended");
   };
+
+  // This is the "Test Detection" button
+  const testDetection = () => {
+    const video = videoRef.current;
+    const system = proctorSystemRef.current;
+    if (video && system && video.readyState >= 2) {
+      // Use performance.now() for a valid timestamp
+      const status = system.processFrame(video, performance.now());
+      console.log('Manual test result:', status);
+      toast.info(`Heads: ${status.debugScores.headCount}, Causes: ${status.causes.join(', ') || 'None'}`);
+      
+      // Manually update UI for this single test
+      setCurrentStatus(status);
+      setHeadCount(status.debugScores.headCount || 0);
+      if (status.isAnomalous) {
+        const alert = {
+          time: new Date().toLocaleTimeString(),
+          type: "warning",
+          message: `MANUAL TEST: ${status.causes[0]}`
+        };
+        setAlerts(prev => [alert, ...prev].slice(0, 15));
+      }
+    } else {
+      toast.warning("Please start monitoring before testing detection.");
+    }
+  }
 
   const exportReport = () => {
     const report = {
@@ -241,12 +300,11 @@ const Proctoring = () => {
       gazeDeviations: gazeDeviations,
       handDetections: handDetections,
       criticalAnomalies: criticalAnomaliesCount,
-      alerts: alerts,
-      currentStatus: currentStatus
+      alerts: alerts
     };
     
     console.log("Exporting report:", report);
-    toast.success("Report exported successfully");
+    toast.success("Report data logged to console.");
   };
 
   const formatTime = (seconds: number) => {
@@ -254,6 +312,15 @@ const Proctoring = () => {
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
+
+  // Determine status for the bottom-right card
+  const getSafeStatus = () => {
+    if (!currentStatus) return { text: "✓ Safe", issues: 0 };
+    if (currentStatus.isCritical) return { text: "✗ Critical", issues: currentStatus.causes.length };
+    if (currentStatus.isAnomalous) return { text: "⚠️ Alert", issues: currentStatus.causes.length };
+    return { text: "✓ Safe", issues: 0 };
+  }
+  const safeStatus = getSafeStatus();
 
   return (
     <div className="min-h-screen bg-gradient-hero">
@@ -314,8 +381,13 @@ const Proctoring = () => {
                         <Badge variant="secondary" className="bg-card/80 backdrop-blur block">
                           Heads: {headCount}
                         </Badge>
+                        {currentStatus.causes.length > 0 && (
+                          <Badge variant="outline" className="bg-card/80 backdrop-blur block">
+                            {currentStatus.causes.join(', ')}
+                          </Badge>
+                        )}
                       </div>
-                      <div className={`absolute inset-0 border-2 pointer-events-none ${
+                      <div className={`absolute inset-0 border-2 pointer-events-none rounded-lg ${
                         currentStatus.isCritical ? 'border-destructive' :
                         currentStatus.isAnomalous ? 'border-warning' :
                         'border-accent/50'
@@ -331,12 +403,21 @@ const Proctoring = () => {
                       {isInitializing ? "Initializing..." : "Start Proctoring"}
                     </Button>
                   ) : (
-                    <Button onClick={stopMonitoring} variant="destructive" size="lg" className="flex-1">
-                      <Square className="mr-2 h-4 w-4" />
-                      Stop Session
-                    </Button>
+                    <>
+                      <Button onClick={stopMonitoring} variant="destructive" size="lg" className="flex-1">
+                        <Square className="mr-2 h-4 w-4" />
+                        Stop Session
+                      </Button>
+                      <Button 
+                        onClick={testDetection}
+                        variant="outline"
+                        size="lg"
+                      >
+                        Test Detection
+                      </Button>
+                    </>
                   )}
-                  <Button onClick={exportReport} variant="outline" disabled={!isMonitoring && alerts.length === 0}>
+                  <Button onClick={exportReport} variant="outline" size="lg" disabled={alerts.length === 0}>
                     <Download className="mr-2 h-4 w-4" />
                     Export Report
                   </Button>
@@ -430,10 +511,10 @@ const Proctoring = () => {
                 </CardHeader>
                 <CardContent>
                   <div className="text-sm font-bold">
-                    {currentStatus?.isAnomalous ? "⚠️ Alert" : "✓ Safe"}
+                    {safeStatus.text}
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    {currentStatus?.causes.length || 0} Issues
+                    {safeStatus.issues} Issues
                   </p>
                 </CardContent>
               </Card>
